@@ -1,0 +1,396 @@
+﻿<!DOCTYPE HTML>
+<html>
+    <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+        <meta name="viewport" content="width=device-width">
+		<meta http-equiv="X-UA-Compatible" content="IE=EmulateIE9" >
+        <title>IT : Timeplanner</title>
+        <link rel="icon" href="legoSmallMe.ico" type="image/x-icon" />
+        <link rel="shortcut icon" href="legoSmallMe.ico" type="image/x-icon" />
+        <link rel="stylesheet" type="text/css" href="styles.css" />
+        <link rel="stylesheet" type="text/css" href="responsiveStyles.css" />
+        <!-- Font awesome CDN -->
+        <link rel="stylesheet" href="//maxcdn.bootstrapcdn.com/font-awesome/4.3.0/css/font-awesome.min.css">
+        <script type="text/javascript" src="jquery-1.11.3.min.js"></script>
+        <script type="text/javascript" src="jquery.cookie.js"></script>
+        <script type="text/javascript" src="addDays.js"></script>
+        <script type="text/javascript">
+
+            // Student Timeplanner - v4.5 (D2L Version)
+            // May 2015
+            // Sean Morrow
+            
+            // retrieve server sided script
+            var retrieveScript = "https://web.nscctruro.ca/Sean_Morrow/secure/d2lTimeplanner/scripts/retrieveData.aspx";
+			// event data pulled from JSON
+			var data;
+            // day adjustment for next/previous navigation links
+            var adjustment;
+            // the type of student to build the calendar
+            var studentType = 1;
+            // user authentication variable for D2L iCal request URL
+            var token;
+            // has user setup D2L yet?
+            var setupComplete = false;
+            // delimited string of deadline IDs that have been checked off (greyed out)
+            var checkedDeadlines;
+			// arrays for converting data to full names
+			var months = new Array("January","February","March","April","May","June","July","August","September","October","November","December");
+			var weekdays = new Array("Sun", "Mon", "Tues", "Weds", "Thurs", "Fri", "Sat");
+            // grab current date from system clock
+            var dateCurrent = new Date();
+			// date object counter for building calendar
+            var dateCounter;
+
+            // ------------------------------------------------------- private methods
+            function buildCalendar() {
+				var dueMonth;
+				var dueDay;
+                var dueYear;
+				var out = "";
+
+                // clear out calendar for work to be done to it
+				$("#contentPane").html("");
+                // close any panes that might be open
+				//closeAll();
+
+				// build calendar for a two week span
+                // grab current date
+				dateCounter = new Date();
+                // add/subtract days for next/previous navigation to setup dateCounter to be on correct day to start from
+				if (adjustment != 0) dateCounter = dateCounter.addDays(adjustment);
+
+				for (var n = 0; n < 15; n++) {
+				    // pull out proper month and day data from date object
+                    dueMonth = dateCounter.getMonth() + 1;
+				    dueDay = dateCounter.getDate();
+                    dueYear = dateCounter.getFullYear();
+
+                    // drop week divider line if the day is a sunday
+				    if ((dateCounter.getDay() == 0) && (n != 0)) {
+				        out += "<div class='weekDivider'></div>";
+				    }
+				    // begin constructing output HTML string for day
+				    if ((dateCounter.getDate() == 1) || (n == 0)) {
+				        // add name of month
+				        out += "<div class='monthPane'>";
+				        out += "<span class='month'>" + months[dueMonth - 1] + " </span>";
+				        if (n == 0) {
+				            out += "<span style='float:right;margin-top:7px'>";
+				            out += "<a href='javascript:onPrevious();' id='lnkPrevious'>Previous</a><span id='lnkPreviousDead' style='display:none;color:#444444'>Previous</span> <span style='color:#666666;'>|</span> <a href='javascript:onNext();' id='lnkNext'>Next</a><span id='lnkNextDead' style='display:none;color:#444444'>Next</span>";
+				            out += "</span>";
+				        }
+				        out += "</div>";
+				    }
+				    out += "<div id='day" + n + "' class='dayPane'>";
+				    out += "<div class='date'>" + dateCounter.getDate() + " " + weekdays[dateCounter.getDay()];
+				    if (dateCounter.toDateString() == dateCurrent.toDateString()) out += " : Today"
+				    out += "</div>";
+
+					// find all events for the current day / month
+					for (var p=0; p<data.length; p++) {
+						if ((data[p].duemonth == dueMonth) && (data[p].dueday == dueDay) && (data[p].dueyear == dueYear) && ((data[p].studentType == studentType) || (data[p].studentType == "0") || (data[p].author == "Moodle"))) {
+							// process this event into the HTML
+							out = generateDeadlineHTML(out, data[p]);
+						}
+					}
+					out += "</div>";
+
+					// add a day to the date object
+					dateCounter = dateCounter.addDays(1);
+                }
+
+                // drop output into contentPane
+				$("#contentPane").html(out);
+
+                // adjust opacity of deadline divs for checked off deadlines
+				for (var n = 0; n < checkedDeadlines.length; n++) $("#deadline" + checkedDeadlines[n]).css("opacity", 0.2);
+
+                // setup rollover for btnClose button for all panes (detailsPane,helpPane,d2lUrlPane)
+				$(".fa-times-circle-o").hover(
+                    function () {
+                        $(this).css("color", "#2a7a91");
+                    },
+                    function () {
+                        $(this).css("color", "#353535");
+                    }
+                );
+                
+                // adjust interface to reflect current settings
+				var setupStatusString = "Not Complete";
+                if (setupComplete) setupStatusString = "Complete";
+                $("#instructions > div > div > div:last > a").text(setupStatusString);
+                $("#compressedInstructions > div > div:last > a").text(setupStatusString);
+            }
+
+            function generateDeadlineHTML(out, source) {
+                var style = "imog1Color";
+                if (source.studentType == "0") style = "generalColor";
+                
+                out += "<div id='deadline" + source.id + "' class='deadlinePane'>" + 
+                    "<a href='#' onclick='onChecked(\"" + source.id + "\");return false;'><i class='fa fa-exclamation-circle fa-lg' style='margin-right:5px'></i></a>" +
+                    "<a href='#' id='lnk" + source.id + "' onclick='onDetails(\"" + source.id + "\");return false;' class='" + style + "'>" + source.name + "</a>" +
+                    "</div>" + 
+                    "<div id='details" + source.id + "' class='detailsPane'>" +
+                    "<i class='fa fa-times-circle-o fa-2x' onclick='onCloseDetailsPane(\"" + source.id + "\");' style='float:right;'></i>" +
+                    "<b>" + source.name + "</b><br/><br/>";
+                out += "<b>Due on: </b>" + months[source.duemonth - 1] + " " + source.dueday + " at " + source.duetime + "<br/>";
+                
+                var description = source.description.replace(/\n/g, "<br/>");
+                out += "<b>Author: </b>" + source.authorname + "<br/>" + 
+                    "<b>Course: </b>" + source.course + "<br/>" + 
+                    "<b>Description:</b><br/>" + description + "<br/>" +
+                    "</div>";
+                return out;
+            }
+            
+            function closeAll() {
+                // close all open panes
+                //$(".detailsPane").css("display", "none");
+                $("#helpPane").css("display", "none");
+                $("#d2lUrlPane").css("display", "none");
+            }
+            
+            function saveSettings(){
+                // save settings data in cookie
+                var cookieString = token;
+                $.cookie("timeplannerData", cookieString, { expires:365 });                
+            }
+
+            // ------------------------------------------------------- event handlers
+            function onDetails(targetID) {
+                if ($("#details" + targetID).css("display") == "none") {
+                    // close all panes if any opened
+                    closeAll();
+                    // make detailsPane visible
+                    $("#details" + targetID).slideDown();
+                } else {
+                    $("#details" + targetID).slideUp();
+                }
+            }
+
+            function onChecked(targetID) {
+                // target div to alter
+                var target = $("#deadline" + targetID);
+
+                //console.log("in onChecked: " + target.css("opacity"));
+                
+                // toggle opacity
+                if (target.css("opacity") == 1) {
+                    target.css("opacity", 0.2);
+                    // add this ID to the checkedDeadlines
+                    checkedDeadlines.push(targetID);
+                } else {
+                    target.css("opacity", 1);
+                    // find index of ID in array
+                    for (var n = 0; n < checkedDeadlines.length; n++) {
+                        if (checkedDeadlines[n] == targetID) {
+                            checkedDeadlines.splice(n, 1);
+                            break;
+                        }
+                    }
+                }
+
+                // convert array back to a string
+                checkedString = checkedDeadlines.toString();
+                // save changes to cookie
+                $.cookie("timeplannerCheckedDeadlines", checkedString, { expires: 365 });
+
+                //console.log("checkedString: " + checkedString);
+            }
+            
+            function onOpenPane(which) {
+                if ($(which).css("display") == "none") {
+                    // close all panes if any opened
+                    closeAll();
+                    // interface cleanup
+                    $("#txtD2LUrl").val("");
+                    $("input:radio:eq(" + (studentType - 1) + ")").prop("checked",true);
+                    // make pane visible
+                    $(which).slideDown();
+                }
+            }
+
+            function onClosePane() {
+                // close all panes (all close buttons call this method)
+                $("#helpPane").slideUp();
+                $("#d2lUrlPane").slideUp();
+                //$(".detailsPane").slideUp();
+            }
+            
+            function onCloseDetailsPane(targetID) {
+                $("#details" + targetID).slideUp();
+            }
+
+            function onNext() {
+                // adjusting how many days after current day
+                adjustment += 15;
+                buildCalendar();
+            }
+
+            function onPrevious() {
+                // adjusting how many days before current day
+                adjustment -= 15;
+                buildCalendar();
+            }
+
+            function onSaveD2LUrl() {
+                // extract data from fields
+                try {
+                    var moodleQueryString = $("#txtD2LUrl").val().split("?")[1];                    
+                    token = moodleQueryString.split("&")[0].split("=")[1];
+                    saveSettings();
+                    onClosePane();
+                    onStartup();
+                } catch(e) {
+                    $("#txtD2LUrl").val("");
+                    return;
+                }
+            }
+			
+            function onLoaded(result, textStatus, xmlhttp) {
+                // grab JSON response from server and parse
+                data = result;
+                data = data.deadlines;
+                
+                // day adjustment is initialized - want to view two week span starting with today
+                adjustment = 0;
+                // build the calendar
+                buildCalendar();
+                // fade out loading overlay
+                $("#loadingOverlay").delay(500).fadeOut(300);
+            }
+            
+            function onError() {
+                // error message here
+                console.log("AJAX request error :(");
+            }
+            
+            function onStartup() {
+                // disabling the entire RIA using loading overlay
+                $("#loadingOverlay").show();
+                
+                // initialization - default if no settings provided
+                studentType = 1;
+                token = "undefined";
+                //token = "aderqmbjm1i8jd0l170a";
+
+                // get cookie data if any
+                if ($.cookie("timeplannerData") != null) {
+                    //console.log("settings from cookies");
+                    // pull data from cookies
+                    token = $.cookie("timeplannerData");
+                    setupComplete = true;
+                }
+
+                console.log("token: " + token)
+
+                if (token == "undefined") {
+                    // no cookie yet - user has not entered D2L iCal URL
+                    onOpenPane('#d2lUrlPane');
+                    $("#loadingOverlay").delay(300).fadeOut(300);
+                } else {
+                    // get checked deadlines data from seperate cookie
+                    checkedDeadlines = new Array();
+                    if ($.cookie("timeplannerCheckedDeadlines") != null) {
+                        var checkedDeadlinesString = $.cookie("timeplannerCheckedDeadlines");
+                        // only split if the string is not empty
+                        if (checkedDeadlinesString != "") checkedDeadlines = checkedDeadlinesString.split(",");
+                    }
+
+                    // send request to get pizza orders via JSON
+                    $.ajax({
+                        type: "POST",
+                        url: retrieveScript + "?token=" + token + "&tricky=" + Math.random(),
+                        crossDomain: true,
+                        contentType: "application/json",
+                        dataType: "jsonp",
+                        success: onLoaded,
+                        error: onError
+                    });
+                }
+            }
+
+            $(document).ready(function () {
+                // preload loading images
+                var myImage1 = new Image();
+                myImage1.src = "loading.gif";
+				var myImage2 = new Image();
+				myImage2.src = "btnClose_off.png";
+				var myImage3 = new Image();
+				myImage3.src = "btnType1Close_off.png";
+                myImage3.onload = onStartup;
+            });
+
+        </script>
+    </head>
+    <body>
+        <div id="main">
+            
+            <div id="instructions">
+                <img src="title.png" alt="Student Timeplanner" />
+                <div style="float:right;margin-top:5px;">
+                    Click the list of links on the right to view details for the corresponding deadline. Navigate to other biweekly periods with the next and previous links. Click the type of student you are from the links below.<br /><br />
+                    <div style="text-align:right;">
+                        D2L Setup:<br/>
+                        <div>
+                            <a href="javascript:onOpenPane('#d2lUrlPane');">Not completed</a>
+                        </div>
+                    </div>
+                    <br />
+                    <a href="javascript:onOpenPane('#helpPane');">Help</a>
+                </div>
+            </div>
+            
+            <div id="calendarPane">
+                <div id="compressedInstructions">
+                    <img src="titleHorizontal.png" alt="Student Timeplanner"/>
+                    <br /><br />
+                    Click the list of links on the right to view details for the corresponding deadline. Navigate to other biweekly periods with the next and previous links. Click the type of student you are from the links below.<br /><br />
+                    <div>
+                        D2L Setup:<br /><a href="javascript:onOpenPane('#d2lUrlPane');">Not completed</a>
+                    </div>
+                    <div style="margin-top:5px;">
+                        <a href="javascript:onOpenPane('#helpPane');">Help</a>
+                    </div>
+                </div>
+                <div id="helpPane">
+                    <i class="fa fa-times-circle-o fa-2x" onclick="onClosePane();" style="float:right;"></i>
+                    <div style="font-weight:bold;padding-bottom:5px;color:#353535;">Timeplanner : Help</div>
+                    The IT / Game Development industry is heavily deadline based and naturally our programs at the NSCC are no different. The trick is to manage your time effectively in order to complete all the projects on time! Procrastination is something we all do, but don't let it get the better of you. This timeplanner was developed to help you achieve the goal of better time management.
+                    <br /><br />
+                    Your greatest resource is your time.
+                    <br /><br />
+                    <b>What's an event?</b><br />
+                    If you look at the calendar you will notice that some days contain blue links.  This is an event. Click on any of these deadlines to get a detailed view of the due date, description, etc.
+                </div>
+
+                <div id="d2lUrlPane">
+                    <i class="fa fa-times-circle-o fa-2x" onclick="onClosePane();" style="float:right;"></i>
+                    <div style="font-weight:bold;padding-bottom:5px;color:#353535;">Timeplanner : Setup D2L URL</div>
+
+                    To view all your D2L events in the timeplanner, copy/paste the calendar URL (iCal) into the textbox below and click save.
+                    <br/><br/>
+                    The timeplanner will then refresh and it will be setup for the current computer. This only needs to be done once unless your cookies are erased. 
+                    <div style="margin-top:20px;">
+                        Enter the D2L iCal calendar URL here:<br/>
+                        <input type="text" id="txtD2LUrl" />
+                    </div>
+                    <div style="margin-top:10px;">
+                        <a href='javascript:onSaveD2LUrl();'>Save</a>
+                        <a href='javascript:onClosePane();' style="margin-left:8px">Cancel</a>
+                    </div>
+
+                </div>
+                <div id="contentPane"></div>
+            </div> 
+            
+        </div>
+
+        <!-- loading screen -->
+        <div id="loadingOverlay">
+            <i id="spinner" class="fa fa-spinner fa-spin fa-4x"></i>
+        </div>
+
+    </body>
+</html>
